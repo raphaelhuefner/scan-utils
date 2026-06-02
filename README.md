@@ -9,6 +9,27 @@ input JPG or PNG files.
 
 Typically these images would be scanned documents.
 
+## Place images in a PDF
+
+`place-in-pdf.py` places JPEG and PNG files at the physical size specified by
+their DPI metadata. It uses A4 portrait pages by default, keeps a margin around
+each page, centers images horizontally, and stacks as many images vertically as
+fit without scaling them.
+
+Run it through `uv`:
+
+```bash
+uv run python place-in-pdf.py \
+  --output scans.pdf \
+  scans/
+```
+
+Directory arguments are expanded recursively in alphabetical order. Existing
+output files are never overwritten. Use `--page-size letter` for Letter pages,
+`--margin-mm` and `--gap-mm` to adjust the layout, or `--force-source-dpi` when
+image metadata is missing or unreliable. Duplicate source files are rejected
+unless `--allow-duplicates` is given.
+
 ## Post-process scanned documents
 
 `postprocess-scanned-document.py` deskews and crops scanned JPEG or PNG files.
