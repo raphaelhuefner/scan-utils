@@ -8,6 +8,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 
@@ -101,6 +102,33 @@ class PostprocessScannedDocumentTests(unittest.TestCase):
             self.assertIn("missing DPI metadata", stderr.getvalue())
             self.assertEqual(list(archive.iterdir()), [])
             self.assertEqual(list(email.iterdir()), [])
+
+    def test_detects_outer_document_instead_of_dark_center_fold(self) -> None:
+        scanner_bed = np.zeros((800, 1000, 3), dtype=np.uint8)
+        for row in range(scanner_bed.shape[0]):
+            scanner_bed[row, :, :] = 185 + round(row / scanner_bed.shape[0] * 30)
+        document = Image.new("RGB", (700, 500), "#eeeeee")
+        draw = ImageDraw.Draw(document)
+        draw.line((350, 0, 350, 499), fill="#333333", width=15)
+        draw.line((80, 110, 300, 110), fill="#999999", width=4)
+        draw.line((400, 160, 620, 160), fill="#999999", width=4)
+        rotated = document.rotate(3, expand=True, fillcolor="#cccccc")
+        scanner_bed_image = Image.fromarray(scanner_bed)
+        scanner_bed_image.paste(
+            rotated,
+            (
+                (scanner_bed_image.width - rotated.width) // 2,
+                (scanner_bed_image.height - rotated.height) // 2,
+            ),
+        )
+
+        rectangle, angle = postprocess.detect_document_rectangle(scanner_bed_image)
+        edges = np.roll(rectangle, -1, axis=0) - rectangle
+        lengths = sorted(np.linalg.norm(edges, axis=1))
+
+        self.assertAlmostEqual(angle, -3, delta=0.3)
+        self.assertAlmostEqual(lengths[-1], 700, delta=15)
+        self.assertAlmostEqual(lengths[0], 500, delta=15)
 
     def test_rerun_reports_existing_archive_instead_of_overwriting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

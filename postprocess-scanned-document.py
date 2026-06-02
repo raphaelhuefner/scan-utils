@@ -13,8 +13,9 @@ import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png"}
-PREVIEW_MAX_DIMENSION = 1600
+PREVIEW_MAX_DIMENSION = 800
 EMAIL_DPI = 300.0
+GRABCUT_ITERATIONS = 4
 
 
 @dataclass
@@ -193,7 +194,7 @@ def detect_rectangles(images: list[SourceImage]) -> None:
         assert source.image is not None
         try:
             rectangle, angle = detect_document_rectangle(source.image)
-        except ValueError as exc:
+        except (ValueError, cv2.error) as exc:
             source.add_error("detect", str(exc))
             continue
         source.rectangle = rectangle
@@ -211,37 +212,23 @@ def detect_document_rectangle(image: Image.Image) -> tuple[np.ndarray, float]:
         fy=scale,
         interpolation=cv2.INTER_AREA,
     )
-    gray = cv2.cvtColor(preview, cv2.COLOR_RGB2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 40, 120)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
-
     image_area = preview.shape[0] * preview.shape[1]
-    candidates: list[tuple[float, tuple, float, float]] = []
-    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    for contour in contours:
-        contour_area = cv2.contourArea(contour)
-        if contour_area < image_area * 0.08:
-            continue
-        rectangle = cv2.minAreaRect(contour)
-        (_, _), (rect_width, rect_height), _ = rectangle
-        rectangle_area = rect_width * rect_height
-        if rectangle_area <= 0:
-            continue
-        rectangularity = contour_area / rectangle_area
-        area_ratio = rectangle_area / image_area
-        if rectangularity < 0.70 or area_ratio > 1.02:
-            continue
-        score = area_ratio * rectangularity
-        candidates.append((score, rectangle, rectangularity, area_ratio))
-
-    if not candidates:
+    mask = segment_document_from_background(preview)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
         raise ValueError("could not confidently find a rectangular document boundary")
 
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    _, rectangle, rectangularity, area_ratio = candidates[0]
-    if rectangularity < 0.78 or area_ratio < 0.12:
+    contour = max(contours, key=cv2.contourArea)
+    contour_area = cv2.contourArea(contour)
+    rectangle = cv2.minAreaRect(contour)
+    (_, _), (rect_width, rect_height), _ = rectangle
+    rectangle_area = rect_width * rect_height
+    if rectangle_area <= 0:
+        raise ValueError("detected document boundary is empty")
+
+    rectangularity = contour_area / rectangle_area
+    area_ratio = rectangle_area / image_area
+    if rectangularity < 0.78 or not 0.12 <= area_ratio <= 0.98:
         raise ValueError(
             "low-confidence document boundary "
             f"(rectangularity={rectangularity:.2f}, area={area_ratio:.1%})"
@@ -250,6 +237,63 @@ def detect_document_rectangle(image: Image.Image) -> tuple[np.ndarray, float]:
     box = cv2.boxPoints(rectangle).astype(np.float32) / scale
     angle = rectangle_deskew_angle(box)
     return box, angle
+
+
+def segment_document_from_background(preview: np.ndarray) -> np.ndarray:
+    """Separate one document from a mostly uniform scanner-lid background."""
+    height, width = preview.shape[:2]
+    shortest_side = min(height, width)
+    definite_border = max(2, round(shortest_side * 0.015))
+    probable_border = max(definite_border + 1, round(shortest_side * 0.06))
+
+    mask = np.full((height, width), cv2.GC_PR_FGD, dtype=np.uint8)
+    mask[:definite_border, :] = cv2.GC_BGD
+    mask[-definite_border:, :] = cv2.GC_BGD
+    mask[:, :definite_border] = cv2.GC_BGD
+    mask[:, -definite_border:] = cv2.GC_BGD
+    mask[
+        definite_border:probable_border,
+        definite_border:-definite_border,
+    ] = cv2.GC_PR_BGD
+    mask[
+        -probable_border:-definite_border,
+        definite_border:-definite_border,
+    ] = cv2.GC_PR_BGD
+    mask[
+        probable_border:-probable_border,
+        definite_border:probable_border,
+    ] = cv2.GC_PR_BGD
+    mask[
+        probable_border:-probable_border,
+        -probable_border:-definite_border,
+    ] = cv2.GC_PR_BGD
+
+    background_model = np.zeros((1, 65), dtype=np.float64)
+    foreground_model = np.zeros((1, 65), dtype=np.float64)
+    cv2.grabCut(
+        preview,
+        mask,
+        None,
+        background_model,
+        foreground_model,
+        GRABCUT_ITERATIONS,
+        cv2.GC_INIT_WITH_MASK,
+    )
+    document_mask = np.where(
+        (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
+    ).astype(np.uint8)
+
+    closing_size = max(5, round(shortest_side * 0.035))
+    if closing_size % 2 == 0:
+        closing_size += 1
+    closing_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (closing_size, closing_size)
+    )
+    document_mask = cv2.morphologyEx(
+        document_mask, cv2.MORPH_CLOSE, closing_kernel, iterations=2
+    )
+    opening_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    return cv2.morphologyEx(document_mask, cv2.MORPH_OPEN, opening_kernel)
 
 
 def rectangle_deskew_angle(box: np.ndarray) -> float:
