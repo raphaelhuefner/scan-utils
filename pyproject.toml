@@ -1,0 +1,11 @@
+[project]
+name = "pdf-with-multiple-img"
+version = "0.0.1"
+description = "Allows multiple raster images to be placed on pages in a PDF"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python-headless>=4.13.0.92",
+    "pillow>=12.2.0",
+    "pymupdf>=1.27.2.3",
+]
