@@ -5,17 +5,24 @@ from __future__ import annotations
 
 import argparse
 import io
-import math
 import os
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png"}
+from common import (
+    SourceImage as BaseSourceImage,
+    absolute_path,
+    discover_sources as discover_image_sources,
+    non_negative_float,
+    positive_float,
+    read_dpi_pair,
+)
+
 MM_PER_INCH = 25.4
 POINTS_PER_INCH = 72.0
 PAGE_SIZES = {
@@ -33,20 +40,11 @@ MIRRORED_EXIF_ORIENTATIONS = {2, 4, 5, 7}
 
 
 @dataclass
-class SourceImage:
-    path: Path
-    errors: list[str] = field(default_factory=list)
+class SourceImage(BaseSourceImage):
     width_pt: float | None = None
     height_pt: float | None = None
     rotate: int = 0
     normalized_stream: bytes | None = None
-
-    @property
-    def ok(self) -> bool:
-        return not self.errors
-
-    def add_error(self, step: str, message: str) -> None:
-        self.errors.append(f"{step}: {message}")
 
 
 @dataclass(frozen=True)
@@ -66,10 +64,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("images", nargs="+", metavar="IMG_OR_DIR")
     parser.add_argument(
         "--output",
-        required=True,
         type=Path,
         metavar="FILE.pdf",
-        help="new PDF file to create",
+        help=(
+            "new PDF file to create; defaults to a sibling file named "
+            "scanned-document-for-email.pdf when there is exactly one input directory"
+        ),
     )
     parser.add_argument(
         "--page-size",
@@ -102,54 +102,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="allow the same source image to appear more than once",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    apply_default_output_file(args, parser)
+    return args
 
 
-def non_negative_float(value: str) -> float:
-    number = float(value)
-    if not math.isfinite(number) or number < 0:
-        raise argparse.ArgumentTypeError("must be non-negative")
-    return number
+def apply_default_output_file(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    if args.output is not None:
+        return
 
+    if len(args.images) == 1:
+        input_path = absolute_path(Path(args.images[0]))
+        if input_path.is_dir():
+            args.output = input_path.parent / "scanned-document-for-email.pdf"
+            return
 
-def positive_float(value: str) -> float:
-    number = float(value)
-    if not math.isfinite(number) or number <= 0:
-        raise argparse.ArgumentTypeError("must be greater than zero")
-    return number
-
-
-def absolute_path(path: Path) -> Path:
-    return path.expanduser().absolute()
+    parser.error(
+        "the following arguments are required unless there is exactly one input "
+        "directory: --output"
+    )
 
 
 def discover_sources(arguments: list[str]) -> list[SourceImage]:
-    """Expand each directory argument in place into alphabetically sorted images."""
-    sources: list[SourceImage] = []
-    for argument in arguments:
-        path = absolute_path(Path(argument))
-        if not path.exists():
-            sources.append(SourceImage(path, errors=["discovery: path does not exist"]))
-            continue
-        if path.is_dir():
-            files = sorted(
-                (
-                    candidate
-                    for candidate in path.rglob("*")
-                    if candidate.is_file()
-                    and candidate.suffix.lower() in SUPPORTED_SUFFIXES
-                ),
-                key=lambda candidate: str(candidate).lower(),
-            )
-            sources.extend(SourceImage(candidate) for candidate in files)
-            continue
-        if path.suffix.lower() not in SUPPORTED_SUFFIXES:
-            sources.append(
-                SourceImage(path, errors=["discovery: unsupported file extension"])
-            )
-            continue
-        sources.append(SourceImage(path))
-    return sources
+    return discover_image_sources(
+        arguments, SourceImage, reject_unsupported_files=True
+    )
 
 
 def validate_duplicates(images: list[SourceImage], allow_duplicates: bool) -> None:
@@ -187,13 +166,7 @@ def read_source_images(images: list[SourceImage], forced_dpi: float | None) -> N
 def read_dpi(image: Image.Image, forced_dpi: float | None) -> tuple[float, float]:
     if forced_dpi is not None:
         return forced_dpi, forced_dpi
-    dpi = image.info.get("dpi")
-    if not dpi or len(dpi) < 2:
-        raise ValueError("missing DPI metadata; use --force-source-dpi to override")
-    dpi_x, dpi_y = map(float, dpi[:2])
-    if dpi_x <= 0 or dpi_y <= 0:
-        raise ValueError(f"invalid DPI metadata: {dpi!r}")
-    return dpi_x, dpi_y
+    return read_dpi_pair(image)
 
 
 def set_geometry(

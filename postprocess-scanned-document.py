@@ -5,35 +5,36 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png"}
+from common import (
+    SourceImage as BaseSourceImage,
+    absolute_path,
+    discover_sources as discover_image_sources,
+    ensure_output_directory,
+    is_skipped,
+    non_negative_float,
+    positive_float,
+    read_dpi_pair,
+)
+
 PREVIEW_MAX_DIMENSION = 800
 EMAIL_DPI = 300.0
 GRABCUT_ITERATIONS = 4
 
 
 @dataclass
-class SourceImage:
-    path: Path
-    errors: list[str] = field(default_factory=list)
+class SourceImage(BaseSourceImage):
     image: Image.Image | None = None
     dpi: float | None = None
     rectangle: np.ndarray | None = None
     deskew_angle: float | None = None
     archive_path: Path | None = None
-
-    @property
-    def ok(self) -> bool:
-        return not self.errors
-
-    def add_error(self, step: str, message: str) -> None:
-        self.errors.append(f"{step}: {message}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -116,20 +117,6 @@ def apply_default_output_directories(
     )
 
 
-def non_negative_float(value: str) -> float:
-    number = float(value)
-    if number < 0:
-        raise argparse.ArgumentTypeError("must be non-negative")
-    return number
-
-
-def positive_float(value: str) -> float:
-    number = float(value)
-    if number <= 0:
-        raise argparse.ArgumentTypeError("must be greater than zero")
-    return number
-
-
 def jpeg_quality(value: str) -> int:
     number = int(value)
     if not 1 <= number <= 100:
@@ -137,53 +124,8 @@ def jpeg_quality(value: str) -> int:
     return number
 
 
-def absolute_path(path: Path) -> Path:
-    return path.expanduser().absolute()
-
-
-def is_skipped(path: Path, skipped_paths: list[Path]) -> bool:
-    path = absolute_path(path)
-    for skipped_path in skipped_paths:
-        if path == skipped_path or skipped_path in path.parents:
-            return True
-    return False
-
-
 def discover_sources(arguments: list[str], skipped: list[Path]) -> list[SourceImage]:
-    """Expand each directory argument in place into alphabetically sorted image files."""
-    sources: list[SourceImage] = []
-    for argument in arguments:
-        path = absolute_path(Path(argument))
-        if is_skipped(path, skipped):
-            continue
-        if not path.exists():
-            sources.append(SourceImage(path, errors=["discovery: path does not exist"]))
-            continue
-        if path.is_dir():
-            files = sorted(
-                (
-                    candidate
-                    for candidate in path.rglob("*")
-                    if candidate.is_file()
-                    and candidate.suffix.lower() in SUPPORTED_SUFFIXES
-                    and not is_skipped(candidate, skipped)
-                ),
-                key=lambda candidate: str(candidate).lower(),
-            )
-            sources.extend(SourceImage(candidate) for candidate in files)
-            continue
-        sources.append(SourceImage(path))
-    return sources
-
-
-def ensure_output_directory(path: Path) -> str | None:
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return str(exc)
-    if not path.is_dir():
-        return "path exists but is not a directory"
-    return None
+    return discover_image_sources(arguments, SourceImage, skipped=skipped)
 
 
 def read_source_images(images: list[SourceImage], forced_dpi: float | None) -> None:
@@ -204,11 +146,7 @@ def read_source_images(images: list[SourceImage], forced_dpi: float | None) -> N
 
 def read_dpi(image: Image.Image) -> float:
     dpi = image.info.get("dpi")
-    if not dpi or len(dpi) < 2:
-        raise ValueError("missing DPI metadata; use --force-source-dpi to override")
-    dpi_x, dpi_y = map(float, dpi[:2])
-    if dpi_x <= 0 or dpi_y <= 0:
-        raise ValueError(f"invalid DPI metadata: {dpi!r}")
+    dpi_x, dpi_y = read_dpi_pair(image)
     if abs(dpi_x - dpi_y) / max(dpi_x, dpi_y) > 0.01:
         raise ValueError(f"non-square DPI metadata is unsupported: {dpi!r}")
     return (dpi_x + dpi_y) / 2

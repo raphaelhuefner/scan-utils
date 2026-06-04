@@ -21,6 +21,37 @@ SPEC.loader.exec_module(place_in_pdf)
 
 
 class PlaceInPdfTests(unittest.TestCase):
+    def test_single_input_directory_defaults_output_to_sibling_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scans = root / "scans"
+            scans.mkdir()
+
+            args = place_in_pdf.parse_args([str(scans)])
+
+            self.assertEqual(
+                args.output, root / "scanned-document-for-email.pdf"
+            )
+
+    def test_explicit_output_overrides_single_directory_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scans = root / "scans"
+            output = root / "custom.pdf"
+            scans.mkdir()
+
+            args = place_in_pdf.parse_args(["--output", str(output), str(scans)])
+
+            self.assertEqual(args.output, output)
+
+    def test_output_is_required_for_non_directory_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source = Path(temporary_directory) / "scan.jpg"
+            source.touch()
+
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                place_in_pdf.parse_args([str(source)])
+
     def test_places_images_at_physical_size_and_starts_new_pages_as_needed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
