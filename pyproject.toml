@@ -1,5 +1,5 @@
 [project]
-name = "pdf-with-multiple-img"
+name = "scan-utils"
 version = "0.0.1"
 description = "Allows multiple raster images to be placed on pages in a PDF"
 readme = "README.md"

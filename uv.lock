@@ -173,7 +173,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pdf-with-multiple-img"
+name = "scan-utils"
 version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
