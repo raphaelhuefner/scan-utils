@@ -1,4 +1,4 @@
 
 .PHONY: test
 test:
-	uv run python -m unittest discover -s ./tests
+	UV_CACHE_DIR=./.uv-cache uv run python -m unittest discover -s ./tests
