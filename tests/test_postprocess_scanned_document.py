@@ -21,6 +21,52 @@ SPEC.loader.exec_module(postprocess)
 
 
 class PostprocessScannedDocumentTests(unittest.TestCase):
+    def test_single_input_directory_defaults_output_directories_to_siblings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scans = root / "scans"
+            scans.mkdir()
+
+            args = postprocess.parse_args([str(scans)])
+
+            self.assertEqual(args.archive_dir, root / "aligned-original")
+            self.assertEqual(args.email_dir, root / "email-images")
+            self.assertEqual(args.email_jpeg_quality, 40)
+
+    def test_explicit_output_directory_overrides_single_directory_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scans = root / "scans"
+            archive = root / "custom-archive"
+            scans.mkdir()
+
+            args = postprocess.parse_args(
+                ["--archive-dir", str(archive), str(scans)]
+            )
+
+            self.assertEqual(args.archive_dir, archive)
+            self.assertEqual(args.email_dir, root / "email-images")
+
+    def test_output_directories_are_required_for_non_directory_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source = Path(temporary_directory) / "scan.jpg"
+            source.touch()
+
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                postprocess.parse_args([str(source)])
+
+    def test_email_jpeg_quality_argument(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            scans = root / "scans"
+            scans.mkdir()
+
+            args = postprocess.parse_args(
+                ["--email-jpeg-quality", "55", str(scans)]
+            )
+
+            self.assertEqual(args.email_jpeg_quality, 55)
+
     def test_directory_expansion_is_sorted_in_place_and_respects_skip(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

@@ -46,14 +46,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("images", nargs="+", metavar="IMG_OR_DIR")
     parser.add_argument(
         "--archive-dir",
-        required=True,
         type=Path,
         metavar="ARCHIVE_DIRECTORY",
         help="directory for deskewed and cropped images at source resolution",
     )
     parser.add_argument(
         "--email-dir",
-        required=True,
         type=Path,
         metavar="EMAIL_DIRECTORY",
         help="directory for 300 DPI JPEG images",
@@ -72,11 +70,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="override source DPI metadata",
     )
     parser.add_argument(
-        "--jpeg-quality",
-        default=75,
+        "--email-jpeg-quality",
+        default=40,
         type=jpeg_quality,
         metavar="QUALITY",
-        help="JPEG quality for 300 DPI email images (default: 75)",
+        help="JPEG quality for 300 DPI email images (default: 40)",
     )
     parser.add_argument(
         "--skip",
@@ -86,7 +84,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="IMG_OR_DIR",
         help="skip a source file or directory tree; may be repeated",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    apply_default_output_directories(args, parser)
+    return args
+
+
+def apply_default_output_directories(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    if args.archive_dir is not None and args.email_dir is not None:
+        return
+
+    if len(args.images) == 1:
+        input_path = absolute_path(Path(args.images[0]))
+        if input_path.is_dir():
+            parent = input_path.parent
+            if args.archive_dir is None:
+                args.archive_dir = parent / "aligned-original"
+            if args.email_dir is None:
+                args.email_dir = parent / "email-images"
+            return
+
+    missing_options = []
+    if args.archive_dir is None:
+        missing_options.append("--archive-dir")
+    if args.email_dir is None:
+        missing_options.append("--email-dir")
+    parser.error(
+        "the following arguments are required unless there is exactly one input "
+        f"directory: {', '.join(missing_options)}"
+    )
 
 
 def non_negative_float(value: str) -> float:
@@ -457,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
     read_source_images(images, args.force_source_dpi)
     detect_rectangles(images)
     rotate_crop_and_archive(images, archive_dir, args.crop_margin_mm)
-    create_email_images(images, email_dir, args.jpeg_quality)
+    create_email_images(images, email_dir, args.email_jpeg_quality)
     return report_errors(images)
 
 

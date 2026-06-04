@@ -14,7 +14,7 @@ Run it through `uv`:
 uv run python postprocess-scanned-document.py \
   --archive-dir output/aligned-original \
   --email-dir output/email-images \
-  --jpeg-quality 75 \
+  --email-jpeg-quality 40 \
   scans/
 ```
 
@@ -22,6 +22,9 @@ Directory arguments are expanded recursively in alphabetical order. Use
 `--skip IMG_OR_DIR` one or more times to exclude source files or directory
 trees during a rerun. Existing output files are reported as errors and are
 never overwritten.
+
+When the only input is one directory, `--archive-dir` and `--email-dir` default
+to sibling directories named `aligned-original` and `email-images`.
 
 If scanner DPI metadata is absent or unreliable, pass an explicit value with
 `--force-source-dpi`.
