@@ -3,9 +3,12 @@ name = "scan-utils"
 version = "0.0.1"
 description = "Helper scripts for batch-processing scanned documents."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
+    "matplotlib>=3.11.0",
+    "numpy>=2.5.0",
     "opencv-python-headless>=4.13.0.92",
     "pillow>=12.2.0",
     "pymupdf>=1.27.2.3",
+    "scipy>=1.18.0",
 ]

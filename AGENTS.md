@@ -1,4 +1,4 @@
-This Python project should only use uv, nothing else.
+This Python project should only use `uv`, nothing else.
 
 Always use a local `uv` cache dir to avoid sandbox restrictions.
 
