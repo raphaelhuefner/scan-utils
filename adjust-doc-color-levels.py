@@ -67,32 +67,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="JPEG quality for JPEG outputs (default: 90)",
     )
     parser.add_argument(
-        "--dark-tolerance",
-        default=0.05,
-        type=fraction,
-        metavar="FRACTION",
-        help=(
-            "fraction of the dark-spike peak below which the histogram is considered "
-            "to have returned to baseline; used to find the black cutoff point "
-            "(default: 0.05)"
-        ),
-    )
-    parser.add_argument(
         "--hist-dir",
         type=Path,
         metavar="HISTOGRAM_DIRECTORY",
         help="directory for histogram diagrams; if omitted, no diagrams are saved",
-    )
-    parser.add_argument(
-        "--white-leading-fraction",
-        default=0.15,
-        type=fraction,
-        metavar="FRACTION",
-        help=(
-            "fraction of the white-spike peak below which the histogram is considered "
-            "to be before the white cluster; used to find the white cutoff point "
-            "(default: 0.15)"
-        ),
     )
     args = parser.parse_args(argv)
     apply_default_output_directory(args, parser)
@@ -261,54 +239,6 @@ def save_histogram_diagram(
     )
 
 
-def find_level_cutoffs(
-    smoothed: np.ndarray,
-    dark_tolerance: float,
-    white_leading_fraction: float,
-) -> tuple[int, int]:
-    """
-    Analyze the HSV Value histogram to find black and white cutoff levels.
-
-    Returns (black_cutoff, white_cutoff) where:
-    - pixels with V <= black_cutoff map to pure black
-    - pixels with V >= white_cutoff map to pure white
-    """
-    # White peak: the dominant cluster at the bright end (always the largest for documents)
-    white_peak_pos = int(np.argmax(smoothed))
-    white_peak_val = smoothed[white_peak_pos]
-
-    # Valley: the minimum between index 0 and the white peak separates content from paper
-    valley_pos = int(np.argmin(smoothed[:white_peak_pos])) if white_peak_pos > 0 else 0
-
-    # Black cutoff: trailing edge of the dark-content spike
-    black_cutoff = 0
-    if valley_pos > 1:
-        dark_region = smoothed[: valley_pos + 1]
-        dark_peak_pos = int(np.argmax(dark_region))
-        dark_peak_val = dark_region[dark_peak_pos]
-
-        # Scan rightward from the dark peak to find where histogram returns to baseline
-        trailing = smoothed[dark_peak_pos : valley_pos + 1]
-        below_tolerance = np.where(trailing <= dark_tolerance * dark_peak_val)[0]
-        if len(below_tolerance) > 0:
-            black_cutoff = dark_peak_pos + int(below_tolerance[0])
-        else:
-            # Spike never falls back to tolerance level; use the valley as fallback
-            black_cutoff = valley_pos
-
-    # White cutoff: leading edge of the white-paper spike
-    # Scan leftward from the white peak to find where histogram drops below threshold
-    white_cutoff = 255
-    if white_peak_pos > 0:
-        threshold = white_leading_fraction * white_peak_val
-        # Last index (from the left) where smoothed is still below the threshold
-        below_leading = np.where(smoothed[: white_peak_pos + 1] <= threshold)[0]
-        if len(below_leading) > 0:
-            white_cutoff = int(below_leading[-1])
-
-    return max(0, black_cutoff), min(255, white_cutoff)
-
-
 def build_levels_lut(black_cutoff: int, white_cutoff: int) -> np.ndarray:
     """Build a 256-entry lookup table that applies the level adjustment."""
     lut = np.zeros(256, dtype=np.uint8)
@@ -365,8 +295,6 @@ def process_image(
     output_dir: Path,
     reserved_paths: set[Path],
     jpeg_quality: int,
-    dark_tolerance: float,
-    white_leading_fraction: float,
     hist_dir: Path | None = None,
 ) -> None:
     output_path = output_dir / source.path.name
@@ -419,7 +347,7 @@ def process_image(
     try:
         save_image(adjusted_rgb, output_path, original_format, dpi, jpeg_quality)
         print(
-            f"{source.path.name}: mse={mse:8.4f}, dark_to_bridge={dark_to_bridge:8.4f}, bridge_to_white={bridge_to_white:8.4f} → {output_path.name}"
+            f"{source.path.name}: mse={mse:9.7f}, dark_to_bridge={dark_to_bridge:6.2f}, bridge_to_white={bridge_to_white:6.2f} → {output_path.name}"
         )
     except OSError as exc:
         source.add_error("save", str(exc))
@@ -473,8 +401,6 @@ def main(argv: list[str] | None = None) -> int:
             output_dir,
             reserved_paths,
             jpeg_quality=args.jpeg_quality,
-            dark_tolerance=args.dark_tolerance,
-            white_leading_fraction=args.white_leading_fraction,
             hist_dir=hist_dir,
         )
 
